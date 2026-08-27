@@ -7,7 +7,11 @@ const resolved = path.resolve(__dirname, '..', DB_FILE.replace(/^\.\//, ''));
 fs.mkdirSync(path.dirname(resolved), { recursive: true });
 
 const db = new Database(resolved);
-db.pragma('journal_mode = WAL');
+// DELETE (not WAL) — some cloud volume filesystems (e.g. Railway) don't
+// support the shared-memory mapping WAL mode needs, which crashes the
+// native SQLite engine. DELETE mode is slightly slower under heavy
+// concurrent writes but works everywhere and is plenty fast for this app.
+db.pragma('journal_mode = DELETE');
 db.pragma('foreign_keys = ON');
 
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');

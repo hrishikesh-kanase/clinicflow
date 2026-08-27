@@ -1,0 +1,10 @@
+{
+  "name": "clinicflow",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ClinicFlow deployment entry point — installs and runs the real app inside backend/",
+  "scripts": {
+    "postinstall": "npm install --prefix backend",
+    "start": "node backend/server.js"
+  }
+}

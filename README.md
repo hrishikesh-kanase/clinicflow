@@ -25,27 +25,39 @@ refresh:
 
 ```
 clinicflow/
-  backend/            Express + SQLite API server
-    server.js         Entry point — also serves the frontend
+  package.json          Deployment entry point (see "Deploying" below) — do
+                         not delete this even though it looks empty; it's
+                         what tells a host like Railway how to start the app.
+  backend/               Express + SQLite API server
+    server.js            Entry point — also serves the frontend
     db/
-      schema.sql       Table definitions
-      index.js         Opens the SQLite file, applies the schema
-      seed.js          Seeds default staff logins + sample data (idempotent)
-      reset.js         Wipes and re-seeds the database (npm run seed:reset)
-      serialize.js      DB row -> API JSON shape helpers
-    middleware/auth.js  JWT verification + role guards
-    routes/             One file per resource (auth, patients, appointments,
-                         billing, inventory, treatments, admin, branding)
-    services/otp.js     Stubbed OTP sender — see "Going live" below
-    storage/            Everything that must survive a restart: the SQLite
-                         file (storage/data/) and uploaded logos
-                         (storage/uploads/). On a host like Railway, point
-                         one persistent volume at this single folder.
-    .env.example        Copy to .env to configure
+      schema.sql          Table definitions
+      index.js            Opens the SQLite file, applies the schema
+      seed.js             Seeds default staff logins + sample data (idempotent)
+      reset.js            Wipes and re-seeds the database (npm run seed:reset)
+      serialize.js         DB row -> API JSON shape helpers
+    middleware/auth.js     JWT verification + role guards
+    routes/                One file per resource (auth, patients, appointments,
+                            billing, inventory, treatments, admin, branding)
+    services/otp.js        Stubbed OTP sender — see "Going live" below
+    storage/                Everything that must survive a restart: the SQLite
+                            file (storage/data/) and uploaded logos
+                            (storage/uploads/). On a host like Railway, point
+                            one persistent volume at this single folder.
+    .env.example            Copy to .env to configure
   frontend/
-    index.html          The entire UI (vanilla JS, no build step)
-  README.md             This file
+    index.html             The entire UI (vanilla JS, no build step)
+  README.md                This file
 ```
+
+**Important:** `backend/` and `frontend/` must stay siblings — in the same
+parent folder as each other — and the root `package.json` must stay at the
+very top alongside both of them. The backend serves the frontend by looking
+one folder up from itself (`backend/../frontend`), and the root
+`package.json` is what a host installs and starts. Don't upload just the
+`backend` folder on its own to a host — always upload all four items
+(`package.json`, `backend`, `frontend`, `README.md`) together, keeping them
+side by side.
 
 ## Running it
 
@@ -57,6 +69,10 @@ npm install
 cp .env.example .env      # already done for you if you received this zip pre-configured
 npm start
 ```
+
+(The root `package.json` — `npm install && npm start` from the very top
+folder — also works and is what a host like Railway uses; see "Deploying"
+below. Both ways run the exact same app.)
 
 Then open **http://localhost:4000** — the backend also serves the
 frontend, so there's nothing else to run. The database file is created
