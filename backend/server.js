@@ -25,7 +25,7 @@ app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }));
 app.use('/uploads', express.static(path.join(__dirname, 'storage', 'uploads')));
 
 // Serve the frontend (single deployable app)
-const frontendDir = path.join(__dirname, '..', 'frontend');
+const frontendDir = path.join(__dirname, 'public');
 app.use(express.static(frontendDir));
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
