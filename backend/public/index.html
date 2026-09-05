@@ -142,6 +142,17 @@
   .rx-line{display:grid;grid-template-columns:2fr 1fr 1fr 1fr 70px 30px;gap:8px;align-items:end;margin-bottom:10px}
   @media(max-width:700px){.rx-line{grid-template-columns:1fr 1fr;}}
 
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+  .cal-head{margin-bottom:6px;font-size:12px;font-weight:600;color:var(--muted);text-align:center}
+  .cal-cell{min-height:74px;border:1px solid var(--border);border-radius:8px;padding:6px;cursor:pointer;transition:background .1s}
+  .cal-cell:hover{background:var(--teal-l)}
+  .cal-cell.cal-blank{border:none;cursor:default;background:none}
+  .cal-cell.cal-blank:hover{background:none}
+  .cal-cell.cal-today{border-color:var(--teal);border-width:2px}
+  .cal-daynum{font-size:13px;font-weight:600}
+  .cal-count{margin-top:4px;font-size:11px;color:#fff;background:var(--teal);border-radius:999px;padding:2px 7px;display:inline-block}
+  @media(max-width:700px){.cal-cell{min-height:50px;font-size:11px}.cal-count{font-size:10px;padding:1px 5px}}
+
   .timeline{border-left:2px solid var(--border);margin-left:6px;padding-left:16px}
   .tl-item{position:relative;margin-bottom:18px}
   .tl-item::before{content:"";position:absolute;left:-23px;top:3px;width:11px;height:11px;border-radius:50%;background:var(--teal);border:2px solid #fff}
@@ -238,11 +249,11 @@ const apiPatch = (p,b) => api('PATCH', p, b);
    ========================================================================== */
 const NAV = {
   patient:[['book','My Appointments','cal']],
-  reception:[['desk','Front Desk','list'],['pay','Collect Payments','cash'],['patients','Patient Directory','users']],
-  doctor:[['queue','Consultation Queue','steth']],
-  pharmacy:[['pqueue','Prescription Queue','pill'],['inventory','Inventory','box']],
-  treatment:[['tqueue','Treatment Queue','spark']],
-  admin:[['dash','Dashboard','chart'],['treat','Treatment Master','spark'],['inventory','Inventory','box'],['users','Users & Roles','users'],['settings','Settings','gear']],
+  reception:[['desk','Front Desk','list'],['pay','Collect Payments','cash'],['patients','Patient Directory','users'],['calendar','Calendar','cal']],
+  doctor:[['queue','Consultation Queue','steth'],['calendar','Calendar','cal']],
+  pharmacy:[['pqueue','Prescription Queue','pill'],['inventory','Inventory','box'],['calendar','Calendar','cal']],
+  treatment:[['tqueue','Treatment Queue','spark'],['calendar','Calendar','cal']],
+  admin:[['dash','Dashboard','chart'],['treat','Treatment Master','spark'],['inventory','Inventory','box'],['users','Users & Roles','users'],['calendar','Calendar','cal'],['settings','Settings','gear']],
 };
 const ICON = {
   cal:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
@@ -285,18 +296,46 @@ function closeModal(){$('#modalRoot').innerHTML=''}
    ========================================================================== */
 const state = { view:null, recFilter:'today', loginTab:'patient' };
 let pendingDueCount = 0;
-let branding = { clinicName:'ClinicFlow', logoUrl:'' };
+let branding = { clinicName:'ClinicFlow', logoUrl:'', accentColor:'' };
 
 function brandHTML(size){
   const cls = size==='lg' ? 'logo-img' : 'logo-img';
   if(branding.logoUrl) return `<img class="${cls}" src="${esc(branding.logoUrl)}" alt="${esc(branding.clinicName)}">`;
   return `<span class="dot"></span> ${esc(branding.clinicName)}`;
 }
+
+/* -- Accent color theming --------------------------------------------------
+   The app's default accent is --teal (plus the --teal-d / --teal-l shades
+   derived from it for hover states and light tints). A clinic's branding
+   can override just this accent family — auto-detected from their logo on
+   upload, or set manually in Settings — without touching layout/background
+   colors, which stay consistent across every clinic. */
+const DEFAULT_ACCENT = '#0F766E';
+
+function hexToRgb(hex){
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  const n = m ? parseInt(m[1], 16) : parseInt(DEFAULT_ACCENT.slice(1), 16);
+  return [(n>>16)&255, (n>>8)&255, n&255];
+}
+function mix(rgb, target, amt){ return rgb.map((v,i)=> v + (target[i]-v)*amt); }
+function rgbToHex(rgb){
+  return '#' + rgb.map(v => Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('');
+}
+function applyAccentColor(hex){
+  const base = (hex && /^#[0-9a-f]{6}$/i.test(hex)) ? hex : DEFAULT_ACCENT;
+  const rgb = hexToRgb(base);
+  const root = document.documentElement.style;
+  root.setProperty('--teal', base);
+  root.setProperty('--teal-d', rgbToHex(mix(rgb, [0,0,0], 0.18)));   // hover/pressed shade
+  root.setProperty('--teal-l', rgbToHex(mix(rgb, [255,255,255], 0.88))); // light tint (chips, focus rings)
+}
+
 async function loadBranding(){
   try{
     branding = await apiGet('/branding') || branding;
   }catch(e){ /* keep defaults if the API isn't reachable yet */ }
   document.title = `${branding.clinicName} — Appointment & Clinic Manager`;
+  applyAccentColor(branding.accentColor);
   const box = $('#brandBox'); if(box) box.innerHTML = brandHTML();
 }
 
@@ -350,7 +389,7 @@ async function render(){
   main.innerHTML = '<div class="empty">Loading…</div>';
   const VIEWS = { book:viewPatientHome, desk:viewDesk, pay:viewPay, patients:viewPatients, queue:viewDoctorQueue,
     pqueue:viewPharmacy, inventory:viewInventory, tqueue:viewTreatment, dash:viewDash, treat:viewTreatMaster,
-    users:viewUsers, settings:viewSettings };
+    users:viewUsers, settings:viewSettings, calendar:viewCalendar };
   const fn = VIEWS[state.view];
   if(!fn){ main.innerHTML = emptyRow('Select a view from the left.'); return; }
   try{
@@ -578,6 +617,73 @@ async function deskBookSave(){
   }catch(e){ $('#dbErr').innerHTML=`<div class="err">${esc(e.message)}</div>`; }
 }
 
+/* ==========================================================================
+   VIEW: CALENDAR (every staff role) — past, today and upcoming appointments
+   ========================================================================== */
+let calMonthCursor = null; // 'YYYY-MM'
+let calMonthCache = [];
+function calMonthLabel(ym){
+  const [y,m] = ym.split('-').map(Number);
+  return new Date(y, m-1, 1).toLocaleDateString('en-IN',{month:'long',year:'numeric'});
+}
+function calShiftMonth(ym, delta){
+  let [y,m] = ym.split('-').map(Number);
+  m += delta;
+  if(m<1){ m=12; y--; }
+  if(m>12){ m=1; y++; }
+  return `${y}-${String(m).padStart(2,'0')}`;
+}
+async function viewCalendar(){
+  if(!calMonthCursor) calMonthCursor = todayISO().slice(0,7);
+  const data = await apiGet(`/appointments/calendar?month=${calMonthCursor}`);
+  calMonthCache = data.appointments;
+
+  const byDate = {};
+  calMonthCache.forEach(a=>{ (byDate[a.date] = byDate[a.date]||[]).push(a); });
+
+  const [y,m] = calMonthCursor.split('-').map(Number);
+  const firstDow = new Date(y, m-1, 1).getDay(); // 0 = Sunday
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const todayStr = todayISO();
+
+  let cells = '';
+  for(let i=0;i<firstDow;i++) cells += `<div class="cal-cell cal-blank"></div>`;
+  for(let d=1; d<=daysInMonth; d++){
+    const dateStr = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const list = byDate[dateStr]||[];
+    cells += `<div class="cal-cell${dateStr===todayStr?' cal-today':''}" onclick="calOpenDay('${dateStr}')">
+      <div class="cal-daynum">${d}</div>
+      ${list.length?`<div class="cal-count">${list.length} appt${list.length>1?'s':''}</div>`:''}
+    </div>`;
+  }
+
+  const canCreate = session && session.kind==='staff' && ['reception','admin'].includes(session.role);
+
+  return `<div class="page-h"><div><h1>Appointment calendar</h1><p>Every staff member can see current, past and upcoming appointments here. Click a date to see details.</p></div>
+    ${canCreate?`<button class="btn" onclick="deskBook()">+ Create appointment</button>`:''}</div>
+    <div class="card"><div class="card-b">
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:14px">
+        <button class="btn gray sm" onclick="calShift(-1)">‹ Prev</button>
+        <b style="font-size:16px">${calMonthLabel(calMonthCursor)}</b>
+        <button class="btn gray sm" onclick="calShift(1)">Next ›</button>
+      </div>
+      <div class="cal-grid cal-head">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div>${d}</div>`).join('')}</div>
+      <div class="cal-grid">${cells}</div>
+    </div></div>`;
+}
+function calShift(delta){ calMonthCursor = calShiftMonth(calMonthCursor, delta); render(); }
+function calOpenDay(dateStr){
+  const list = (calMonthCache||[]).filter(a=>a.date===dateStr).sort((a,b)=>a.slot.localeCompare(b.slot));
+  const rows = list.map(a=>{const p=a.patient;
+    return `<tr><td>${esc(a.slot)}</td><td><b>${esc(p.name)}</b><div class="mono" style="font-size:11px;color:var(--muted)">${esc(p.mobile)}</div></td>
+      <td><span class="tag">${esc(a.purpose)}</span></td><td>${chip(a.status)}</td></tr>`;
+  }).join('');
+  modal(`Appointments — ${fmtDate(dateStr)}`,`
+    <div class="t-wrap"><table><thead><tr><th>Slot</th><th>Patient</th><th>Reason / issue</th><th>Status</th></tr></thead>
+    <tbody>${rows||`<tr><td colspan="4">${emptyRow('No appointments booked on this date.')}</td></tr>`}</tbody></table></div>`,
+    `<button class="btn gray" onclick="closeModal()">Close</button>`,'wide');
+}
+
 /* ---- reception: collect payments ---- */
 async function viewPay(){
   const due = await apiGet('/billing/due');
@@ -621,7 +727,7 @@ async function showHistory(pid){
           <div><b>Diagnosis:</b> ${esc(v.diagnosis)||'—'}</div>
           ${v.tests?`<div><b>Tests:</b> ${esc(v.tests)}</div>`:''}
           ${v.treatmentReco?`<div><b>Treatment advised:</b> ${esc(v.treatmentReco)}</div>`:''}
-          ${rx.length?`<div style="margin-top:6px"><b>Prescription:</b><ul style="margin:4px 0 0 18px">${rx.map(r=>`<li>${esc(r.name)} — ${esc(r.dosage)} · ${esc(r.freq)} · ${esc(r.duration)} (${esc(r.food)}) × ${r.qty}</li>`).join('')}</ul></div>`:''}
+          ${rx.length?`<div style="margin-top:6px"><b>Prescription:</b><ul style="margin:4px 0 0 18px">${rx.map(r=>`<li>${esc(r.name)} — ${esc(r.dosage)} · ${esc(r.freq)} · ${esc(r.duration)} (${esc(r.food)}) × ${r.qty}${r.notInStock?' <span class="tag amber">Not in our pharmacy</span>':''}</li>`).join('')}</ul></div>`:''}
           ${v.nextVisit?`<div style="margin-top:4px"><b>Next visit:</b> ${fmtDate(v.nextVisit)}</div>`:''}
         </div></div>`;
     }).join('') || emptyRow('No clinical history yet.');
@@ -655,13 +761,13 @@ async function viewDoctorQueue(){
 let rxLines=[], consultInv=[], consultTreatments=[];
 async function consult(aid){
   const a = doctorQueueCache.find(x=>x.id===aid); if(!a) return;
-  rxLines=[{}];
+  rxLines=[{freqPreset:'', durationUnit:'days'}];
   try{
     [consultInv, consultTreatments] = await Promise.all([apiGet('/inventory'), apiGet('/treatments')]);
   }catch(e){ alert(e.message); return; }
   modal(`Consultation — ${esc(a.patient.name)}`,`
     <div id="csErr"></div>
-    <div class="note">Live stock is shown in the medicine dropdown. Prescribe only what's in stock.</div>
+    <div class="note">Live stock is shown in the medicine dropdown. Quantity is calculated automatically from frequency × duration — adjust it if needed. Tick "Not in our pharmacy" for a medicine the patient should buy elsewhere.</div>
     <div class="field"><label>Patient complaints</label><textarea id="c-comp" rows="2" placeholder="Presenting complaints..."></textarea></div>
     <div class="field"><label>Doctor's observations</label><textarea id="c-obs" rows="2"></textarea></div>
     <div class="field"><label>Diagnosis</label><input id="c-diag"></div>
@@ -674,22 +780,99 @@ async function consult(aid){
     `<button class="btn gray" onclick="closeModal()">Cancel</button><button class="btn" onclick="consultSave('${aid}')">Save & send to queue</button>`,'wide');
   renderRx();
 }
-function rxAdd(){rxLines.push({});renderRx()}
+function rxAdd(){rxLines.push({freqPreset:'', durationUnit:'days'});renderRx()}
 function rxDel(i){rxLines.splice(i,1);renderRx()}
+
+/* Frequency presets follow the standard morning-afternoon-night convention
+   (e.g. "1-0-1" = one dose morning + one at night = 2 doses/day). Only
+   these numeric presets support auto-calculating quantity; SOS/Custom
+   don't have a fixed doses-per-day, so quantity stays a manual entry. */
+const RX_FREQ_PRESETS=[
+  ['1-0-1','1-0-1 · Morning & Night'],
+  ['1-1-1','1-1-1 · Thrice daily'],
+  ['1-0-0','1-0-0 · Morning only'],
+  ['0-1-0','0-1-0 · Afternoon only'],
+  ['0-0-1','0-0-1 · Night only'],
+  ['1-1-0','1-1-0 · Morning & Afternoon'],
+  ['0-1-1','0-1-1 · Afternoon & Night'],
+  ['2-0-2','2-0-2 · Morning & Night (2 each)'],
+  ['SOS','SOS · As needed'],
+  ['custom','Custom…'],
+];
+const RX_DURATION_UNITS=[['days','Day(s)'],['weeks','Week(s)'],['months','Month(s)']];
+
+function rxFreqDosesPerDay(preset){
+  if(!preset || preset==='SOS' || preset==='custom') return null;
+  const parts=preset.split('-').map(Number);
+  if(parts.length!==3 || parts.some(n=>isNaN(n))) return null;
+  return parts.reduce((a,b)=>a+b,0);
+}
+function rxDurationDays(num,unit){
+  const n=+num;
+  if(!n || n<=0) return null;
+  return n*(unit==='weeks'?7:unit==='months'?30:1);
+}
+function rxUnitLabel(n,unit){
+  const map={days:['day','days'], weeks:['week','weeks'], months:['month','months']};
+  const [s,p]=map[unit]||map.days;
+  return (+n===1)?s:p;
+}
+function rxRecalcQty(i){
+  const l=rxLines[i];
+  const perDay=rxFreqDosesPerDay(l.freqPreset);
+  const days=rxDurationDays(l.durationNum,l.durationUnit||'days');
+  if(perDay!=null && days!=null) l.qty=perDay*days;
+}
+function rxSetFreq(i,val){ rxLines[i].freqPreset=val; rxRecalcQty(i); renderRx(); }
+function rxSetFreqCustom(i,val){ rxLines[i].freqCustomText=val; }
+function rxSetDurationNum(i,val){ rxLines[i].durationNum=val; rxRecalcQty(i); renderRx(); }
+function rxSetDurationUnit(i,val){ rxLines[i].durationUnit=val; rxRecalcQty(i); renderRx(); }
+function rxToggleStock(i,checked){ rxLines[i].notInStock=checked; rxLines[i].name=''; renderRx(); }
+
 function renderRx(){
-  const opts=distinctNames(consultInv).map(n=>`<option value="${esc(n)}">${esc(n)} (stock ${groupQty(consultInv,n)})</option>`).join('');
-  $('#rxBox').innerHTML=rxLines.map((l,i)=>`
+  const optsFor=(l)=>distinctNames(consultInv).map(n=>`<option value="${esc(n)}" ${l.name===n?'selected':''}>${esc(n)} (stock ${groupQty(consultInv,n)})</option>`).join('');
+  $('#rxBox').innerHTML=rxLines.map((l,i)=>{
+    const autoCalc = rxFreqDosesPerDay(l.freqPreset)!=null && rxDurationDays(l.durationNum,l.durationUnit)!=null;
+    return `
     <div class="rx-line">
-      <div><label>Medicine</label><select onchange="rxLines[${i}].name=this.value"><option value="">Select…</option>${opts}</select></div>
-      <div><label>Dosage</label><input placeholder="1 tab" oninput="rxLines[${i}].dosage=this.value"></div>
-      <div><label>Freq</label><input placeholder="1-0-1" oninput="rxLines[${i}].freq=this.value"></div>
-      <div><label>Duration</label><input placeholder="5 days" oninput="rxLines[${i}].duration=this.value"></div>
-      <div><label>Qty</label><input type="number" min="1" placeholder="0" oninput="rxLines[${i}].qty=+this.value"></div>
+      <div><label>Medicine</label>
+        ${l.notInStock
+          ? `<input placeholder="Medicine name" value="${esc(l.name||'')}" oninput="rxLines[${i}].name=this.value">`
+          : `<select onchange="rxLines[${i}].name=this.value"><option value="">Select…</option>${optsFor(l)}</select>`}
+      </div>
+      <div><label>Dosage</label><input placeholder="1 tab" value="${esc(l.dosage||'')}" oninput="rxLines[${i}].dosage=this.value"></div>
+      <div><label>Frequency</label>
+        <select onchange="rxSetFreq(${i},this.value)">
+          <option value="">Select…</option>
+          ${RX_FREQ_PRESETS.map(([v,label])=>`<option value="${v}" ${l.freqPreset===v?'selected':''}>${esc(label)}</option>`).join('')}
+        </select>
+        ${l.freqPreset==='custom'?`<input style="margin-top:6px" placeholder="e.g. every 6 hours" value="${esc(l.freqCustomText||'')}" oninput="rxSetFreqCustom(${i},this.value)">`:''}
+      </div>
+      <div><label>Duration</label>
+        <div style="display:flex;gap:6px">
+          <input type="number" min="1" placeholder="5" value="${l.durationNum||''}" style="width:64px" oninput="rxSetDurationNum(${i},this.value)">
+          <select onchange="rxSetDurationUnit(${i},this.value)">${RX_DURATION_UNITS.map(([v,label])=>`<option value="${v}" ${(l.durationUnit||'days')===v?'selected':''}>${label}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div><label>Qty${autoCalc?' (auto)':''}</label><input type="number" min="1" placeholder="0" value="${l.qty||''}" oninput="rxLines[${i}].qty=+this.value"></div>
       <div><button class="btn danger sm" style="padding:9px 10px" onclick="rxDel(${i})">✕</button></div>
-    </div>`).join('') || '<div style="color:var(--muted);font-size:13px;padding:6px 0">No medicines added.</div>';
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;margin:-4px 0 12px;font-weight:400;font-size:12px;color:var(--muted)">
+      <input type="checkbox" style="width:auto" ${l.notInStock?'checked':''} onchange="rxToggleStock(${i},this.checked)"> Not in our pharmacy — patient will buy this elsewhere
+    </label>`;
+  }).join('') || '<div style="color:var(--muted);font-size:13px;padding:6px 0">No medicines added.</div>';
 }
 async function consultSave(aid){
-  const rx=rxLines.filter(l=>l.name&&l.qty>0).map(l=>({name:l.name,dosage:l.dosage||'',freq:l.freq||'',duration:l.duration||'',food:'After food',qty:l.qty,note:''}));
+  const rx=rxLines.filter(l=>l.name&&l.qty>0).map(l=>({
+    name:l.name,
+    dosage:l.dosage||'',
+    freq: l.freqPreset==='custom' ? (l.freqCustomText||'') : (l.freqPreset||''),
+    duration: l.durationNum ? `${l.durationNum} ${rxUnitLabel(l.durationNum,l.durationUnit||'days')}` : '',
+    food:'After food',
+    qty:l.qty,
+    note:'',
+    notInStock: !!l.notInStock,
+  }));
   try{
     await apiPost(`/appointments/${aid}/consultation`,{complaints:$('#c-comp').value,observations:$('#c-obs').value,diagnosis:$('#c-diag').value,tests:$('#c-tests').value,treatmentReco:$('#c-treat').value,nextVisit:$('#c-next').value,rx});
     closeModal(); render();
@@ -703,27 +886,34 @@ let pharmacyQueueCache = [];
 async function viewPharmacy(){
   pharmacyQueueCache = (await apiGet('/appointments/queue/pharmacy')).sort((a,b)=>b.createdAt-a.createdAt);
   const rows = pharmacyQueueCache.map((a,i)=>{const p=a.patient;
+    const billable=a.prescriptions.filter(r=>!r.notInStock).length;
+    const external=a.prescriptions.length-billable;
     return `<tr class="${i===0?'hl':''}"><td>${i===0?'<span class="tag amber">Latest</span>':''}</td>
       <td><b>${esc(p.name)}</b><div class="mono" style="font-size:11px;color:var(--muted)">${esc(p.mobile)}</div></td>
-      <td>${a.prescriptions.length} item(s)</td><td>${fmtDT(a.visit?a.visit.createdAt:a.createdAt)}</td>
+      <td>${billable} item(s)${external?` <span class="tag amber">+${external} external</span>`:''}</td><td>${fmtDT(a.visit?a.visit.createdAt:a.createdAt)}</td>
       <td style="text-align:right"><button class="btn sm" onclick="dispenseUI('${a.id}')">Open & bill</button></td></tr>`;
   }).join('');
   return `<div class="page-h"><div><h1>Prescription queue</h1><p>New scripts from the doctor. Latest is highlighted.</p></div></div>
     <div class="card"><div class="t-wrap"><table><thead><tr><th></th><th>Patient</th><th>Items</th><th>Received</th><th></th></tr></thead>
     <tbody>${rows||`<tr><td colspan="5">${emptyRow('No prescriptions waiting.')}</td></tr>`}</tbody></table></div></div>`;
 }
-let dispLines=[], dispInv=[], dispPatient=null;
+let dispLines=[], dispInv=[], dispPatient=null, dispExternal=[];
 async function dispenseUI(aid){
   const a = pharmacyQueueCache.find(x=>x.id===aid); if(!a) return;
   dispPatient = a.patient;
   try{ dispInv = await apiGet('/inventory'); }catch(e){ alert(e.message); return; }
-  dispLines = a.prescriptions.map(r=>{
+  // Medicines flagged "not in our pharmacy" by the doctor are informational
+  // only — surfaced here so staff can tell the patient, but never billed
+  // or deducted from stock through this screen.
+  dispExternal = a.prescriptions.filter(r=>r.notInStock);
+  dispLines = a.prescriptions.filter(r=>!r.notInStock).map(r=>{
     const batches = dispInv.filter(i=>i.name===r.name).sort((x,y)=>x.expiry<y.expiry?-1:1);
     const first = batches[0]||{};
     return {name:r.name, qty:r.qty, price:first.price||0, gst:first.gst||0};
   });
   modal(`Dispense — ${esc(dispPatient.name)}`,`
     <div id="dpErr"></div>
+    ${dispExternal.length?`<div class="note" style="margin-bottom:10px">Also prescribed but not stocked here — let the patient know to buy separately: <b>${dispExternal.map(r=>esc(r.name)).join(', ')}</b></div>`:''}
     <div id="dispBox"></div>
     <button class="btn ghost sm" onclick="dispAdd()">+ Add OTC / extra medicine</button>
     <div id="dispTotal" style="margin-top:18px"></div>`,
@@ -963,13 +1153,21 @@ async function toggleUserUI(id){ try{ await apiPatch(`/admin/users/${id}/toggle`
 
 async function viewSettings(){
   const [s, br] = await Promise.all([apiGet('/admin/settings'), apiGet('/branding')]);
-  return `<div class="page-h"><div><h1>Settings</h1><p>Clinic-wide defaults, branding and billing/inventory alerts.</p></div></div>
+  return `<div class="page-h"><div><h1>Settings</h1><p>Clinic-wide defaults, branding, appointment reminders and billing/inventory alerts.</p></div></div>
     <div class="grid g2" style="align-items:start">
       <div class="card"><div class="card-h">Branding</div><div class="card-b">
         <div id="brErr"></div>
         ${br.logoUrl?`<img class="logo-preview" src="${esc(br.logoUrl)}" alt="Current logo">`:`<p style="color:var(--muted);font-size:12.5px;margin-bottom:12px">No logo uploaded yet — the app currently shows a text mark instead.</p>`}
         <div class="field"><label>Clinic display name</label><input id="s-name" value="${esc(s.clinicName||'ClinicFlow')}"></div>
         <div class="field"><label>Logo image (PNG, JPG, WEBP or SVG · max 2MB)</label><input type="file" id="s-logo" accept="image/png,image/jpeg,image/webp,image/svg+xml"></div>
+        <div class="field">
+          <label>Accent color</label>
+          <div class="row" style="align-items:center;gap:10px">
+            <input type="color" id="s-color" value="${esc(br.accentColor||DEFAULT_ACCENT)}" data-initial="${esc(br.accentColor||DEFAULT_ACCENT)}" style="width:52px;height:36px;padding:2px;flex:none">
+            <span style="font-size:12.5px;color:var(--muted)">${br.accentColor?'Auto-detected from your logo — pick a different one anytime.':'Uploading a logo will auto-suggest a color, or pick your own now.'}</span>
+          </div>
+          <button type="button" class="btn gray" style="margin-top:8px" onclick="resetAccentColor()">Reset to default</button>
+        </div>
         <div class="row">
           <button class="btn" onclick="saveBranding()">Save branding</button>
           ${br.logoUrl?`<button class="btn danger" onclick="removeLogo()">Remove logo</button>`:''}
@@ -980,6 +1178,16 @@ async function viewSettings(){
         <div class="field"><label>Consultation fee (₹)</label><input type="number" id="s-fee" value="${esc(s.consultationFee||500)}"></div>
         <div class="field"><label>Near-expiry alert window (days)</label><input type="number" id="s-exp" value="${esc(s.nearExpiryDays||60)}"></div>
         <button class="btn" onclick="saveSettings()">Save settings</button>
+      </div></div>
+      <div class="card"><div class="card-h">Appointment reminders</div><div class="card-b">
+        <div id="rmErr"></div>
+        <div id="rmMsg"></div>
+        <p style="color:var(--muted);font-size:12.5px;margin-bottom:12px">An internal alert email is sent here — not to the patient — for every appointment, once the day before and again the same morning at 10:00 AM, listing the customer's name, phone number and reason for the visit.</p>
+        <div class="field"><label>Reminder alert email</label><input type="email" id="s-remind" placeholder="you@yourclinic.com" value="${esc(s.reminderEmail||'')}"></div>
+        <div class="row">
+          <button class="btn" onclick="saveReminderEmail()">Save</button>
+          <button class="btn gray" onclick="sendTestReminders()">Send test now</button>
+        </div>
       </div></div>
     </div>`;
 }
@@ -1001,11 +1209,37 @@ async function saveBranding(){
       let data = null; try{ data = await res.json(); }catch(e){}
       if(!res.ok) throw new Error((data && data.error) || 'Logo upload failed.');
     }
+    // Only push a manual color override if the admin actually changed the
+    // picker in this save — otherwise leave whatever the logo upload above
+    // just auto-detected (or the previously saved color) untouched.
+    const colorInput = $('#s-color');
+    if(colorInput && colorInput.value.toLowerCase() !== (colorInput.dataset.initial||'').toLowerCase()){
+      await apiPut('/branding/color', {accentColor: colorInput.value});
+    }
     await loadBranding(); render();
   }catch(e){ $('#brErr').innerHTML=`<div class="err">${esc(e.message)}</div>`; }
 }
+async function resetAccentColor(){
+  try{ await apiPut('/branding/color', {accentColor:''}); await loadBranding(); render(); }catch(e){ alert(e.message); }
+}
 async function removeLogo(){
   try{ await api('DELETE','/branding/logo'); await loadBranding(); render(); }catch(e){ alert(e.message); }
+}
+async function saveReminderEmail(){
+  try{
+    await apiPut('/admin/settings',{reminderEmail:$('#s-remind').value.trim()});
+    $('#rmMsg').innerHTML = `<div class="note">Saved.</div>`;
+  }catch(e){ $('#rmErr').innerHTML=`<div class="err">${esc(e.message)}</div>`; }
+}
+async function sendTestReminders(){
+  $('#rmMsg').innerHTML = '';
+  try{
+    const result = await apiPost('/admin/reminders/run-now');
+    const total = (result.tomorrow?.checked||0) + (result.today?.checked||0);
+    $('#rmMsg').innerHTML = total
+      ? `<div class="note">Checked ${total} appointment(s) for today/tomorrow — reminders sent (or logged to the server console if no email provider is configured yet).</div>`
+      : `<div class="note">No appointments booked for today or tomorrow to remind about.</div>`;
+  }catch(e){ $('#rmErr').innerHTML=`<div class="err">${esc(e.message)}</div>`; }
 }
 
 /* boot */
