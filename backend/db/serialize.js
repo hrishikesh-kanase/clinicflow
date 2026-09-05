@@ -27,7 +27,7 @@ function visit(v) {
 
 function prescription(r) {
   if (!r) return null;
-  return { id: r.id, visitId: r.visit_id, name: r.name, dosage: r.dosage, freq: r.freq, duration: r.duration, food: r.food, qty: r.qty, note: r.note };
+  return { id: r.id, visitId: r.visit_id, name: r.name, dosage: r.dosage, freq: r.freq, duration: r.duration, food: r.food, qty: r.qty, note: r.note, notInStock: !!r.not_in_stock };
 }
 
 function inventory(i) {
