@@ -28,17 +28,19 @@ CREATE TABLE IF NOT EXISTS otps (
 );
 
 CREATE TABLE IF NOT EXISTS appointments (
-  id         TEXT PRIMARY KEY,
-  patient_id TEXT NOT NULL REFERENCES patients(id),
-  date       TEXT NOT NULL,
-  slot       TEXT NOT NULL,
-  token      INTEGER,
-  purpose    TEXT NOT NULL,
-  status     TEXT NOT NULL,
-  booked_by  TEXT NOT NULL,
-  doctor     TEXT NOT NULL DEFAULT 'doctor',
-  need_treat INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL
+  id                     TEXT PRIMARY KEY,
+  patient_id             TEXT NOT NULL REFERENCES patients(id),
+  date                   TEXT NOT NULL,
+  slot                   TEXT NOT NULL,
+  token                  INTEGER,
+  purpose                TEXT NOT NULL,
+  status                 TEXT NOT NULL,
+  booked_by              TEXT NOT NULL,
+  doctor                 TEXT NOT NULL DEFAULT 'doctor',
+  need_treat             INTEGER NOT NULL DEFAULT 0,
+  reminder_tomorrow_sent INTEGER NOT NULL DEFAULT 0, -- "your appointment is tomorrow" alert already emailed
+  reminder_today_sent    INTEGER NOT NULL DEFAULT 0, -- "your appointment is today" alert already emailed
+  created_at             INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS visits (
@@ -56,15 +58,16 @@ CREATE TABLE IF NOT EXISTS visits (
 );
 
 CREATE TABLE IF NOT EXISTS prescriptions (
-  id        TEXT PRIMARY KEY,
-  visit_id  TEXT NOT NULL REFERENCES visits(id),
-  name      TEXT NOT NULL,
-  dosage    TEXT,
-  freq      TEXT,
-  duration  TEXT,
-  food      TEXT,
-  qty       INTEGER NOT NULL,
-  note      TEXT
+  id            TEXT PRIMARY KEY,
+  visit_id      TEXT NOT NULL REFERENCES visits(id),
+  name          TEXT NOT NULL,
+  dosage        TEXT,
+  freq          TEXT,
+  duration      TEXT,
+  food          TEXT,
+  qty           INTEGER NOT NULL,
+  note          TEXT,
+  not_in_stock  INTEGER NOT NULL DEFAULT 0 -- 1 = doctor prescribed a medicine the clinic doesn't stock; informational only, never billed/dispensed here
 );
 
 CREATE TABLE IF NOT EXISTS inventory (
