@@ -25,8 +25,8 @@ function invQty(name) {
 
 // ---- Book an appointment --------------------------------------------------
 // Patient (self): body { date, slot, purpose }
-// Reception (on behalf): body { date, slot, purpose, patientId } OR { date, slot, purpose, name, mobile } to create-or-reuse a patient
-router.post('/', requireRole('patient', 'reception'), (req, res) => {
+// Reception/Admin (on behalf): body { date, slot, purpose, patientId } OR { date, slot, purpose, name, mobile } to create-or-reuse a patient
+router.post('/', requireRole('patient', 'reception', 'admin'), (req, res) => {
   const { date, slot, purpose } = req.body || {};
   if (!date || !slot || !purpose) return res.status(400).json({ error: 'date, slot and purpose are required.' });
 
@@ -36,7 +36,7 @@ router.post('/', requireRole('patient', 'reception'), (req, res) => {
     patientId = req.user.sub;
     bookedBy = 'patient';
   } else {
-    bookedBy = 'reception';
+    bookedBy = req.user.role; // 'reception' or 'admin'
     if (req.body.patientId) {
       const p = db.prepare('SELECT * FROM patients WHERE id = ?').get(req.body.patientId);
       if (!p) return res.status(404).json({ error: 'Patient not found.' });
@@ -74,6 +74,17 @@ router.get('/', requireRole('reception', 'admin'), (req, res) => {
   res.json(withPatients);
 });
 
+// ---- Calendar (every staff role can view — past, today, and upcoming) -----
+// GET /calendar?month=YYYY-MM — defaults to the current month.
+router.get('/calendar', requireRole('reception', 'doctor', 'pharmacy', 'treatment', 'admin'), (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(req.query.month || '') ? req.query.month : todayISO().slice(0, 7);
+  const from = `${month}-01`;
+  const to = `${month}-31`; // ISO date strings sort lexicographically, so this safely bounds any real day in the month
+  const rows = db.prepare('SELECT * FROM appointments WHERE date >= ? AND date <= ? ORDER BY date, slot').all(from, to);
+  const appointments = rows.map(a => ({ ...S.appointment(a), patient: S.patient(db.prepare('SELECT * FROM patients WHERE id = ?').get(a.patient_id)) }));
+  res.json({ month, appointments });
+});
+
 // ---- A patient's own appointments -----------------------------------------
 router.get('/mine', requireRole('patient'), (req, res) => {
   const rows = db.prepare('SELECT * FROM appointments WHERE patient_id = ? ORDER BY created_at DESC').all(req.user.sub);
@@ -99,7 +110,7 @@ router.get('/queue/doctor', requireRole('doctor'), (req, res) => {
 });
 
 // ---- Doctor: save consultation + prescription ------------------------------
-// body: { complaints, observations, diagnosis, tests, treatmentReco, nextVisit, rx: [{name,dosage,freq,duration,qty,food}] }
+// body: { complaints, observations, diagnosis, tests, treatmentReco, nextVisit, rx: [{name,dosage,freq,duration,qty,food,notInStock}] }
 const saveConsultationTxn = db.transaction((a, doctorRole, body) => {
   const v = {
     id: uid('V'), appt_id: a.id, patient_id: a.patient_id, doctor: doctorRole,
@@ -110,10 +121,13 @@ const saveConsultationTxn = db.transaction((a, doctorRole, body) => {
     VALUES (@id,@appt_id,@patient_id,@doctor,@complaints,@observations,@diagnosis,@treatment_reco,@next_visit,@tests,@created_at)`).run(v);
 
   const rx = Array.isArray(body.rx) ? body.rx.filter(r => r.name && r.qty > 0) : [];
-  const insRx = db.prepare('INSERT INTO prescriptions (id,visit_id,name,dosage,freq,duration,food,qty,note) VALUES (?,?,?,?,?,?,?,?,?)');
-  for (const r of rx) insRx.run(uid('R'), v.id, r.name, r.dosage || '', r.freq || '', r.duration || '', r.food || 'After food', r.qty, r.note || '');
+  const insRx = db.prepare('INSERT INTO prescriptions (id,visit_id,name,dosage,freq,duration,food,qty,note,not_in_stock) VALUES (?,?,?,?,?,?,?,?,?,?)');
+  for (const r of rx) insRx.run(uid('R'), v.id, r.name, r.dosage || '', r.freq || '', r.duration || '', r.food || 'After food', r.qty, r.note || '', r.notInStock ? 1 : 0);
 
-  const hasMeds = rx.length > 0;
+  // Medicines the clinic doesn't stock are informational only (patient buys
+  // them elsewhere) — they never reach the pharmacy's billable queue, so
+  // they shouldn't by themselves route the appointment to "In Pharmacy".
+  const hasMeds = rx.some(r => !r.notInStock);
   const hasTreat = !!body.treatmentReco;
   const status = hasMeds ? 'In Pharmacy' : (hasTreat ? 'In Treatment' : 'Awaiting Payment');
   db.prepare('UPDATE appointments SET status = ?, need_treat = ? WHERE id = ?').run(status, hasTreat ? 1 : 0, a.id);
