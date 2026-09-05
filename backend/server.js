@@ -5,6 +5,7 @@ const cors = require('cors');
 
 require('./db'); // ensures schema is created before routes load
 require('./db/seed')(); // idempotent — seeds only if empty
+const { startReminderScheduler } = require('./services/reminderScheduler');
 
 const app = express();
 app.use(cors());
@@ -41,4 +42,5 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`ClinicFlow backend listening on http://localhost:${PORT}`);
+  startReminderScheduler();
 });
