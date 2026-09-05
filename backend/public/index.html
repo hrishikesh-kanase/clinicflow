@@ -79,8 +79,8 @@
   .card-h{padding:14px 18px;border-bottom:1px solid var(--border);font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:10px}
   .card-b{padding:18px}
   .grid{display:grid;gap:16px}
-  .g2{grid-template-columns:repeat(2,1fr)} .g3{grid-template-columns:repeat(3,1fr)} .g4{grid-template-columns:repeat(4,1fr)}
-  @media(max-width:900px){.g2,.g3,.g4{grid-template-columns:1fr}.nav{width:64px}.nav .label,.nav .grp,.nav .badge{display:none}}
+  .g2{grid-template-columns:repeat(2,1fr)} .g3{grid-template-columns:repeat(3,1fr)} .g4{grid-template-columns:repeat(4,1fr)} .g5{grid-template-columns:repeat(5,1fr)}
+  @media(max-width:900px){.g2,.g3,.g4,.g5{grid-template-columns:1fr}.nav{width:64px}.nav .label,.nav .grp,.nav .badge{display:none}}
 
   .stat{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow)}
   .stat .k{font-size:12px;color:var(--muted);font-weight:600}
@@ -1070,28 +1070,77 @@ async function purchaseSave(id){
 /* ==========================================================================
    VIEW: ADMIN
    ========================================================================== */
+/* Dashboard: an option bar of tabs (Patients / Treatment / Fees / Stock) —
+   click one to drill into that category. Patients/Treatment/Fees each also
+   get a Today / MTD / YTD range toggle; Stock is always a live snapshot. */
+const DASH_TABS = [['patients','Patients'],['treatment','Treatment'],['fees','Fees'],['stock','Stock']];
+const DASH_RANGES = [['today','Today'],['mtd','MTD'],['ytd','YTD']];
+function setDashTab(tab){ state.dashTab=tab; render(); }
+function setDashRange(r){ state.dashRange=r; render(); }
+
+function dashBucketGrid(b){
+  return `<div class="grid g5" style="margin-bottom:18px">
+    <div class="stat"><div class="k">Total appointments</div><div class="v">${b.total}</div></div>
+    <div class="stat"><div class="k">Visited</div><div class="v">${b.visited}</div></div>
+    <div class="stat"><div class="k">Checked-in</div><div class="v">${b.checkedIn}</div></div>
+    <div class="stat ${b.waiting?'warn':''}"><div class="k">Waiting</div><div class="v">${b.waiting}</div></div>
+    <div class="stat"><div class="k">Expected</div><div class="v">${b.expected}</div></div>
+  </div>`;
+}
+
 async function viewDash(){
-  const d = await apiGet('/admin/dashboard');
-  const purposes = Object.entries(d.byPurpose);
-  const maxP = Math.max(1,...purposes.map(([,v])=>v));
-  return `<div class="page-h"><div><h1>Dashboard</h1><p>Today · ${fmtDate(d.date)}</p></div></div>
-    <div class="grid g4" style="margin-bottom:18px">
-      <div class="stat"><div class="k">Collection today</div><div class="v mono">${money(d.collectionToday)}</div></div>
-      <div class="stat"><div class="k">Footfall today</div><div class="v">${d.footfallToday}</div></div>
-      <div class="stat ${d.outstanding?'warn':''}"><div class="k">Outstanding dues</div><div class="v mono">${money(d.outstanding)}</div></div>
-      <div class="stat ${(d.lowStock.length||d.nearExpiry.length)?'danger':''}"><div class="k">Stock alerts</div><div class="v">${d.lowStock.length+d.nearExpiry.length}</div></div>
-    </div>
-    <div class="grid g2">
-      <div class="card"><div class="card-h">Footfall by purpose</div><div class="card-b">
+  if(!state.dashTab) state.dashTab='patients';
+  if(!state.dashRange) state.dashRange='today';
+  const d = await apiGet(`/admin/dashboard?range=${state.dashRange}`);
+
+  const tabBar = `<div class="seg" style="margin-bottom:16px">${DASH_TABS.map(([k,label])=>
+    `<button class="${state.dashTab===k?'on':''}" onclick="setDashTab('${k}')">${label}</button>`).join('')}</div>`;
+  const rangeBar = state.dashTab==='stock' ? '' : `<div class="toolbar" style="margin-bottom:18px"><div class="seg">${DASH_RANGES.map(([k,label])=>
+    `<button class="${state.dashRange===k?'on':''}" onclick="setDashRange('${k}')">${label}</button>`).join('')}</div>
+    <span style="color:var(--muted);font-size:13px">${fmtDate(d.start)}${d.start!==d.end?` – ${fmtDate(d.end)}`:''}</span></div>`;
+
+  let body = '';
+  if(state.dashTab==='patients'){
+    const purposes = Object.entries(d.patients.byPurpose);
+    const maxP = Math.max(1,...purposes.map(([,v])=>v));
+    body = `${dashBucketGrid(d.patients)}
+      <div class="card"><div class="card-h">By visit purpose</div><div class="card-b">
         ${purposes.map(([k,v])=>`<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>${esc(k)}</span><b>${v}</b></div>
           <div style="height:8px;background:var(--bg);border-radius:6px;overflow:hidden"><div style="height:100%;width:${v/maxP*100}%;background:var(--teal);border-radius:6px"></div></div></div>`).join('')}
-      </div></div>
+      </div></div>`;
+  } else if(state.dashTab==='treatment'){
+    body = `${dashBucketGrid(d.treatment)}
+      <div class="note">Scoped to appointments the doctor has flagged for treatment.</div>`;
+  } else if(state.dashTab==='fees'){
+    const f = d.fees;
+    body = `<div class="grid g3" style="margin-bottom:18px">
+        <div class="stat"><div class="k">Collected</div><div class="v mono">${money(f.collected)}</div></div>
+        <div class="stat ${f.pending?'warn':''}"><div class="k">Pending (outstanding)</div><div class="v mono">${money(f.pending)}</div></div>
+        <div class="stat"><div class="k">Today's total earning</div><div class="v mono">${money(f.todayEarning)}</div></div>
+      </div>
+      <div class="card"><div class="card-h">Earning split</div><div class="card-b">
+        <div class="grid g3">
+          <div class="stat"><div class="k">Doctor visiting charges</div><div class="v mono" style="font-size:20px">${money(f.doctorEarning)}</div></div>
+          <div class="stat"><div class="k">Treatment fee</div><div class="v mono" style="font-size:20px">${money(f.treatmentEarning)}</div></div>
+          <div class="stat"><div class="k">Medical (pharmacy) fee</div><div class="v mono" style="font-size:20px">${money(f.medicalEarning)}</div></div>
+        </div>
+      </div></div>`;
+  } else { // stock
+    const s = d.stock;
+    body = `<div class="grid g3" style="margin-bottom:18px">
+        <div class="stat ${(s.lowStock.length||s.nearExpiry.length)?'danger':''}"><div class="k">Stock alerts</div><div class="v">${s.lowStock.length+s.nearExpiry.length}</div></div>
+        <div class="stat ${s.lowStock.length?'warn':''}"><div class="k">Low stock items</div><div class="v">${s.lowStock.length}</div></div>
+        <div class="stat ${s.nearExpiry.length?'warn':''}"><div class="k">Near / past expiry</div><div class="v">${s.nearExpiry.length}</div></div>
+      </div>
       <div class="card"><div class="card-h">Stock alerts</div><div class="card-b">
-        ${d.lowStock.length?`<div style="margin-bottom:10px"><b style="color:var(--alert)">Low stock</b><ul style="margin:6px 0 0 18px;font-size:13px">${d.lowStock.map(n=>`<li>${esc(n.name)} — ${n.qty} left</li>`).join('')}</ul></div>`:''}
-        ${d.nearExpiry.length?`<div><b style="color:var(--wait)">Near / past expiry</b><ul style="margin:6px 0 0 18px;font-size:13px">${d.nearExpiry.map(i=>`<li>${esc(i.name)} (${esc(i.batch)}) — ${fmtDate(i.expiry)}</li>`).join('')}</ul></div>`:''}
-        ${(!d.lowStock.length&&!d.nearExpiry.length)?emptyRow('All stock healthy.'):''}
-      </div></div>
-    </div>`;
+        ${s.lowStock.length?`<div style="margin-bottom:10px"><b style="color:var(--alert)">Low stock</b><ul style="margin:6px 0 0 18px;font-size:13px">${s.lowStock.map(n=>`<li>${esc(n.name)} — ${n.qty} left</li>`).join('')}</ul></div>`:''}
+        ${s.nearExpiry.length?`<div><b style="color:var(--wait)">Near / past expiry</b><ul style="margin:6px 0 0 18px;font-size:13px">${s.nearExpiry.map(i=>`<li>${esc(i.name)} (${esc(i.batch)}) — ${fmtDate(i.expiry)}</li>`).join('')}</ul></div>`:''}
+        ${(!s.lowStock.length&&!s.nearExpiry.length)?emptyRow('All stock healthy.'):''}
+      </div></div>`;
+  }
+
+  return `<div class="page-h"><div><h1>Dashboard</h1><p>Today · ${fmtDate(d.date)}</p></div></div>
+    ${tabBar}${rangeBar}${body}`;
 }
 async function viewTreatMaster(){
   const list = await apiGet('/treatments?all=1');
