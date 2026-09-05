@@ -17,4 +17,18 @@ db.pragma('foreign_keys = ON');
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 
+// --- Lightweight migrations for columns added after the initial schema -----
+// `CREATE TABLE IF NOT EXISTS` above is a no-op on a database that already
+// has the table, so a column added later needs a guarded ALTER TABLE here
+// to reach existing (already-deployed) databases too.
+function ensureColumn(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+ensureColumn('prescriptions', 'not_in_stock', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('appointments', 'reminder_tomorrow_sent', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('appointments', 'reminder_today_sent', 'INTEGER NOT NULL DEFAULT 0');
+
 module.exports = db;
