@@ -4,6 +4,7 @@ const db = require('../db');
 const S = require('../db/serialize');
 const { uid, now, todayISO, daysUntil } = require('../utils');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { runDailyReminders } = require('../services/reminderScheduler');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -94,6 +95,20 @@ router.put('/settings', requireRole('admin'), (req, res) => {
   const rows = db.prepare('SELECT * FROM settings').all();
   const out = {}; rows.forEach(r => { out[r.key] = r.value; });
   res.json(out);
+});
+
+// ---- Reminders --------------------------------------------------------
+// Lets an admin trigger the daily 10 AM reminder pass on demand — handy for
+// confirming the configured alert email actually works without waiting for
+// the next scheduled run.
+router.post('/reminders/run-now', requireRole('admin'), async (req, res) => {
+  try {
+    const result = await runDailyReminders();
+    audit(req.user.sub, 'Run reminders now', JSON.stringify(result));
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 module.exports = router;
