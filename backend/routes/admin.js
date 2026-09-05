@@ -21,35 +21,93 @@ function nearExpiryDays() {
 }
 
 // ---- Dashboard --------------------------------------------------------
-router.get('/dashboard', requireRole('admin'), (req, res) => {
+// The dashboard is split into four admin-selectable tabs (Patients,
+// Treatment, Fees, Stock), each with its own "Today / MTD / YTD" range —
+// this single endpoint returns the numbers for all four at once for the
+// requested range, since none of them are expensive to compute for a
+// clinic-scale dataset.
+//
+// "MTD"/"YTD" here mean the *whole* current calendar month/year (1st to
+// last day), not strictly "up to today" — so a patient booked for later
+// this month still shows up (as "Expected"), which is what makes the
+// Expected bucket meaningful for a forward-looking range.
+function dashboardDateRange(range) {
   const t = todayISO();
-  const paidToday = db.prepare("SELECT * FROM bills WHERE status = 'Paid' AND paid_at IS NOT NULL").all()
-    .filter(b => new Date(b.paid_at).toISOString().slice(0, 10) === t);
-  const collection = paidToday.reduce((s, b) => s + b.total, 0);
-  const outstanding = db.prepare("SELECT COALESCE(SUM(total),0) s FROM bills WHERE status = 'Pending'").get().s;
-  const footfall = db.prepare('SELECT * FROM appointments WHERE date = ?').all(t);
+  if (range === 'mtd') {
+    const [y, m] = t.split('-');
+    const lastDay = new Date(Number(y), Number(m), 0).getDate();
+    return { start: `${y}-${m}-01`, end: `${y}-${m}-${String(lastDay).padStart(2, '0')}` };
+  }
+  if (range === 'ytd') {
+    const y = t.split('-')[0];
+    return { start: `${y}-01-01`, end: `${y}-12-31` };
+  }
+  return { start: t, end: t }; // 'today' (and the fallback for anything unrecognised)
+}
+
+// Buckets a list of appointments into the 5 patient/treatment-tab metrics.
+// "Visited" = fully completed. "Waiting" = arrived and somewhere mid-flow
+// (with the doctor, in pharmacy/treatment, or awaiting payment) — i.e.
+// checked in but not yet done. "Expected" = booked but not yet arrived.
+const WAITING_STATUSES = ['With Doctor', 'In Pharmacy', 'In Treatment', 'Awaiting Payment'];
+function bucketAppointments(list) {
+  return {
+    total: list.length,
+    visited: list.filter(a => a.status === 'Completed').length,
+    checkedIn: list.filter(a => a.status === 'Checked-in').length,
+    waiting: list.filter(a => WAITING_STATUSES.includes(a.status)).length,
+    expected: list.filter(a => a.status === 'Booked').length,
+  };
+}
+
+router.get('/dashboard', requireRole('admin'), (req, res) => {
+  const range = ['today', 'mtd', 'ytd'].includes(req.query.range) ? req.query.range : 'today';
+  const { start, end } = dashboardDateRange(range);
+  const t = todayISO();
+  const inRange = (d) => d >= start && d <= end;
+
+  const allAppts = db.prepare('SELECT * FROM appointments').all();
+  const apptsInRange = allAppts.filter(a => inRange(a.date));
 
   const purposes = ['Skin Issue', 'Hair Issue', 'Treatment', 'Others'];
   const byPurpose = {};
-  purposes.forEach(p => { byPurpose[p] = footfall.filter(a => a.purpose === p).length; });
+  purposes.forEach(p => { byPurpose[p] = apptsInRange.filter(a => a.purpose === p).length; });
 
-  const distinctNames = db.prepare('SELECT DISTINCT name, reorder FROM inventory').all();
+  const patients = { ...bucketAppointments(apptsInRange), byPurpose };
+  const treatment = bucketAppointments(apptsInRange.filter(a => a.need_treat));
+
+  // Fees: "collected" and the doctor/treatment/medical split respect the
+  // selected range (by the bill's paid date); "pending" is always the
+  // live outstanding balance (a snapshot, not a period total); "today's
+  // earning" is always shown as a fixed reference figure alongside
+  // whichever range is selected.
+  const paidBills = db.prepare("SELECT * FROM bills WHERE status = 'Paid' AND paid_at IS NOT NULL").all();
+  const billDate = (b) => new Date(b.paid_at).toISOString().slice(0, 10);
+  const paidInRange = paidBills.filter(b => inRange(billDate(b)));
+  const sumType = (type) => paidInRange.filter(b => b.type === type).reduce((s, b) => s + b.total, 0);
+  const pending = db.prepare("SELECT COALESCE(SUM(total),0) s FROM bills WHERE status = 'Pending'").get().s;
+  const todayEarning = paidBills.filter(b => billDate(b) === t).reduce((s, b) => s + b.total, 0);
+
+  const fees = {
+    collected: paidInRange.reduce((s, b) => s + b.total, 0),
+    pending,
+    doctorEarning: sumType('Consultation'),
+    treatmentEarning: sumType('Treatment'),
+    medicalEarning: sumType('Pharmacy'),
+    todayEarning,
+  };
+
   const nameReorder = {};
   db.prepare('SELECT name, MIN(reorder) reorder FROM inventory GROUP BY name').all().forEach(r => { nameReorder[r.name] = r.reorder; });
   const lowStock = Object.keys(nameReorder).filter(n => invQty(n) <= nameReorder[n]);
-
   const near = nearExpiryDays();
   const nearExp = db.prepare('SELECT * FROM inventory').all().filter(i => daysUntil(i.expiry) <= near).map(S.inventory);
-
-  res.json({
-    date: t,
-    collectionToday: collection,
-    footfallToday: footfall.length,
-    outstanding,
-    byPurpose,
+  const stock = {
     lowStock: lowStock.map(n => ({ name: n, qty: invQty(n) })),
     nearExpiry: nearExp,
-  });
+  };
+
+  res.json({ range, start, end, date: t, patients, treatment, fees, stock });
 });
 
 // ---- Users --------------------------------------------------------------
